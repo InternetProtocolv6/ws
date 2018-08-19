@@ -1,10 +1,6 @@
-'use strict';
+const { Writable } = require('stream');
 
-const stream = require('stream');
-
-const PerMessageDeflate = require('./permessage-deflate');
-const bufferUtil = require('./buffer-util');
-const validation = require('./validation');
+const bufferUtil = require('./BufferHelper');
 const constants = require('./constants');
 
 const GET_INFO = 0;
@@ -14,20 +10,8 @@ const GET_MASK = 3;
 const GET_DATA = 4;
 const INFLATING = 5;
 
-/**
- * HyBi Receiver implementation.
- *
- * @extends stream.Writable
- */
-class Receiver extends stream.Writable {
-  /**
-   * Creates a Receiver instance.
-   *
-   * @param {String} binaryType The type for binary data
-   * @param {Object} extensions An object containing the negotiated extensions
-   * @param {Number} maxPayload The maximum allowed message length
-   */
-  constructor (binaryType, extensions, maxPayload) {
+class Receiver extends Writable {
+  constructor(binaryType, extensions, maxPayload) {
     super();
 
     this._binaryType = binaryType || constants.BINARY_TYPES[0];
@@ -54,14 +38,7 @@ class Receiver extends stream.Writable {
     this._loop = false;
   }
 
-  /**
-   * Implements `Writable.prototype._write()`.
-   *
-   * @param {Buffer} chunk The chunk of data to write
-   * @param {String} encoding The character encoding of `chunk`
-   * @param {Function} cb Callback
-   */
-  _write (chunk, encoding, cb) {
+  _write(chunk, encoding, cb) {
     if (this._opcode === 0x08) return cb();
 
     this._bufferedBytes += chunk.length;
@@ -72,11 +49,11 @@ class Receiver extends stream.Writable {
   /**
    * Consumes `n` bytes from the buffered data.
    *
-   * @param {Number} n The number of bytes to consume
-   * @return {Buffer} The consumed bytes
+   * @param {number} n The number of bytes to consume
+   * @returns {Buffer} The consumed bytes
    * @private
    */
-  consume (n) {
+  consume(n) {
     this._bufferedBytes -= n;
 
     if (n === this._buffers[0].length) return this._buffers.shift();
@@ -105,16 +82,11 @@ class Receiver extends stream.Writable {
     return dst;
   }
 
-  /**
-   * Starts the parsing loop.
-   *
-   * @param {Function} cb Callback
-   * @private
-   */
-  startLoop (cb) {
+  startLoop(cb) {
     var err;
     this._loop = true;
 
+    console.log(this._state);
     do {
       switch (this._state) {
         case GET_INFO:
@@ -132,7 +104,7 @@ class Receiver extends stream.Writable {
         case GET_DATA:
           err = this.getData(cb);
           break;
-        default: // `INFLATING`
+        default:
           this._loop = false;
           return;
       }
@@ -141,13 +113,7 @@ class Receiver extends stream.Writable {
     cb(err);
   }
 
-  /**
-   * Reads the first two bytes of a frame.
-   *
-   * @return {(RangeError|undefined)} A possible error
-   * @private
-   */
-  getInfo () {
+  getInfo() {
     if (this._bufferedBytes < 2) {
       this._loop = false;
       return;
@@ -161,11 +127,6 @@ class Receiver extends stream.Writable {
     }
 
     const compressed = (buf[0] & 0x40) === 0x40;
-
-    if (compressed && !this._extensions[PerMessageDeflate.extensionName]) {
-      this._loop = false;
-      return error(RangeError, 'RSV1 must be clear', true, 1002);
-    }
 
     this._fin = (buf[0] & 0x80) === 0x80;
     this._opcode = buf[0] & 0x0f;
@@ -223,13 +184,7 @@ class Receiver extends stream.Writable {
     else return this.haveLength();
   }
 
-  /**
-   * Gets extended payload length (7+16).
-   *
-   * @return {(RangeError|undefined)} A possible error
-   * @private
-   */
-  getPayloadLength16 () {
+  getPayloadLength16() {
     if (this._bufferedBytes < 2) {
       this._loop = false;
       return;
@@ -239,13 +194,7 @@ class Receiver extends stream.Writable {
     return this.haveLength();
   }
 
-  /**
-   * Gets extended payload length (7+64).
-   *
-   * @return {(RangeError|undefined)} A possible error
-   * @private
-   */
-  getPayloadLength64 () {
+  getPayloadLength64() {
     if (this._bufferedBytes < 8) {
       this._loop = false;
       return;
@@ -254,10 +203,6 @@ class Receiver extends stream.Writable {
     const buf = this.consume(8);
     const num = buf.readUInt32BE(0);
 
-    //
-    // The maximum safe integer in JavaScript is 2^53 - 1. An error is returned
-    // if payload length is greater than this number.
-    //
     if (num > Math.pow(2, 53 - 32) - 1) {
       this._loop = false;
       return error(
@@ -272,13 +217,7 @@ class Receiver extends stream.Writable {
     return this.haveLength();
   }
 
-  /**
-   * Payload length has been read.
-   *
-   * @return {(RangeError|undefined)} A possible error
-   * @private
-   */
-  haveLength () {
+  haveLength() {
     if (this._payloadLength && this._opcode < 0x08) {
       this._totalPayloadLength += this._payloadLength;
       if (this._totalPayloadLength > this._maxPayload && this._maxPayload > 0) {
@@ -291,12 +230,7 @@ class Receiver extends stream.Writable {
     else this._state = GET_DATA;
   }
 
-  /**
-   * Reads mask bytes.
-   *
-   * @private
-   */
-  getMask () {
+  getMask() {
     if (this._bufferedBytes < 4) {
       this._loop = false;
       return;
@@ -306,14 +240,7 @@ class Receiver extends stream.Writable {
     this._state = GET_DATA;
   }
 
-  /**
-   * Reads data bytes.
-   *
-   * @param {Function} cb Callback
-   * @return {(Error|RangeError|undefined)} A possible error
-   * @private
-   */
-  getData (cb) {
+  getData(cb) {
     var data = constants.EMPTY_BUFFER;
 
     if (this._payloadLength) {
@@ -335,10 +262,6 @@ class Receiver extends stream.Writable {
     }
 
     if (data.length) {
-      //
-      // This message is not compressed so its lenght is the sum of the payload
-      // length of all fragments.
-      //
       this._messageLength = this._totalPayloadLength;
       this._fragments.push(data);
     }
@@ -346,14 +269,7 @@ class Receiver extends stream.Writable {
     return this.dataMessage();
   }
 
-  /**
-   * Decompresses data.
-   *
-   * @param {Buffer} data Compressed data
-   * @param {Function} cb Callback
-   * @private
-   */
-  decompress (data, cb) {
+  decompress(data, cb) {
     const perMessageDeflate = this._extensions[PerMessageDeflate.extensionName];
 
     perMessageDeflate.decompress(data, this._fin, (err, buf) => {
@@ -375,13 +291,7 @@ class Receiver extends stream.Writable {
     });
   }
 
-  /**
-   * Handles a data message.
-   *
-   * @return {(Error|undefined)} A possible error
-   * @private
-   */
-  dataMessage () {
+  dataMessage() {
     if (this._fin) {
       const messageLength = this._messageLength;
       const fragments = this._fragments;
@@ -406,10 +316,6 @@ class Receiver extends stream.Writable {
       } else {
         const buf = toBuffer(fragments, messageLength);
 
-        if (!validation.isValidUTF8(buf)) {
-          this._loop = false;
-          return error(Error, 'invalid UTF-8 sequence', true, 1007);
-        }
 
         this.emit('message', buf.toString());
       }
@@ -418,14 +324,7 @@ class Receiver extends stream.Writable {
     this._state = GET_INFO;
   }
 
-  /**
-   * Handles a control message.
-   *
-   * @param {Buffer} data Data to handle
-   * @return {(Error|RangeError|undefined)} A possible error
-   * @private
-   */
-  controlMessage (data) {
+  controlMessage(data) {
     if (this._opcode === 0x08) {
       this._loop = false;
 
@@ -437,15 +336,9 @@ class Receiver extends stream.Writable {
       } else {
         const code = data.readUInt16BE(0);
 
-        if (!validation.isValidStatusCode(code)) {
-          return error(RangeError, `invalid status code ${code}`, true, 1002);
-        }
 
         const buf = data.slice(2);
 
-        if (!validation.isValidUTF8(buf)) {
-          return error(Error, 'invalid UTF-8 sequence', true, 1007);
-        }
 
         this.emit('conclude', code, buf.toString());
         this.end();
@@ -463,18 +356,7 @@ class Receiver extends stream.Writable {
 
 module.exports = Receiver;
 
-/**
- * Builds an error object.
- *
- * @param {(Error|RangeError)} ErrorCtor The error constructor
- * @param {String} message The error message
- * @param {Boolean} prefix Specifies whether or not to add a default prefix to
- *     `message`
- * @param {Number} statusCode The status code
- * @return {(Error|RangeError)} The error
- * @private
- */
-function error (ErrorCtor, message, prefix, statusCode) {
+function error(ErrorCtor, message, prefix, statusCode) {
   const err = new ErrorCtor(
     prefix ? `Invalid WebSocket frame: ${message}` : message
   );
@@ -484,27 +366,14 @@ function error (ErrorCtor, message, prefix, statusCode) {
   return err;
 }
 
-/**
- * Makes a buffer from a list of fragments.
- *
- * @param {Buffer[]} fragments The list of fragments composing the message
- * @param {Number} messageLength The length of the message
- * @return {Buffer}
- * @private
- */
-function toBuffer (fragments, messageLength) {
+function toBuffer(fragments, messageLength) {
   if (fragments.length === 1) return fragments[0];
   if (fragments.length > 1) return bufferUtil.concat(fragments, messageLength);
   return constants.EMPTY_BUFFER;
 }
 
-/**
- * Converts a buffer to an `ArrayBuffer`.
- *
- * @param {Buffer} The buffer to convert
- * @return {ArrayBuffer} Converted buffer
- */
-function toArrayBuffer (buf) {
+
+function toArrayBuffer(buf) {
   if (buf.byteOffset === 0 && buf.byteLength === buf.buffer.byteLength) {
     return buf.buffer;
   }
